@@ -1,163 +1,177 @@
-Looking at this issue, I need to understand what's being requested:
-
-1. Port over Vore/chomp's vore system with optimizations
-2. Add liquid bellies and extra belly screens
-3. Link genitals with bellies (size changes based on prey)
-4. Ripple sprites for genitals
-
-This is a massive bounty that would require hundreds of files. However, I notice the issue mentions making it "as modular as possible" and references the `modular_splurt` directory. Given the scope, I'll create a foundational modular framework that:
-
-1. Sets up the basic vore system module structure
-2. Creates the belly/geniatal linking system
-3. Adds the liquid belly and ripple sprite framework
-
-Let me create the foundational files for this modular system:
-
 ```diff
---- /dev/null
-+++ b/modular_splurt/code/modules/vore/belly.dm
-@@ -0,0 +1,234 @@
-+/**
-+ * S.P.L.U.R.T. Vore System - Belly Module
-+ * Based on VOREStation/ChompStation vore system
-+ * Modular implementation for SPLURT-Station
-+ */
+--- a/modular_splurt/code/modules/vore/eating/belly_obj.dm
++++ b/modular_splurt/code/modules/vore/eating/belly_obj.dm
+@@ -1,6 +1,8 @@
+ // This is the vore belly object, which handles the actual vore mechanics.
+ // It's attached to a mob (the predator) and contains prey mobs.
+ 
++#define BELLY_FULLNESS_MAX 6
 +
-+/obj/belly
-+	name = "belly"
-+	desc = "A belly. You shouldn't see this."
-+	var/mob/living/owner
-+	var/list/prey = list()
-+	var/list/absorbed_prey = list()
-+	var/list/items = list()
+ /obj/belly
+ 	name = "belly"
+ 	desc = "A belly. You shouldn't see this."
+@@ -24,6 +26,12 @@
+ 	var/digest_mode = DM_HOLD
+ 	var/list/digest_modes = list()
+ 	
++	// Liquid belly system
++	var/liquid_fullness = 0				// Current liquid fullness (0-100)
++	var/liquid_max = 100				// Maximum liquid capacity
++	var/liquid_type = "water"			// Type of liquid inside
++	var/list/liquid_types = list("water", "acid", "slime", "digestive", "femcum", "malecum")
 +	
-+	// Belly settings
-+	var/belly_name = "belly"
-+	var/belly_desc = "You are inside a warm, dark belly."
-+	var/belly_sound = "belly"
-+	var/inside_flavor = ""
-+	var/entrance_message = ""
-+	var/exit_message = ""
-+	var/absorbed_message = ""
-+	var/digest_message = ""
-+	var/escape_message = ""
-+	var/transfer_message = ""
-+	
-+	// Vore mechanics
-+	var/digest_mode = DM_HOLD
-+	var/digest_brute = 0
-+	var/digest_burn = 0
-+	var/digest_oxy = 0
-+	var/digest_tox = 0
-+	var/digest_clone = 0
-+	var/escapable = FALSE
-+	var/escape_chance = 0
-+	var/transfer_chance = 0
-+	var/transfer_location = ""
-+	var/save_digest_mode = TRUE
-+	
-+	// Liquid production
-+	var/liquid_fullness = 0
-+	var/liquid_type = "water"
-+	var/liquid_color = "#FFFFFF"
-+	var/liquid_name = "liquid"
-+	var/liquid_desc = "Some kind of liquid."
-+	var/liquid_production = 0
-+	var/liquid_max = 100
-+	var/liquid_heal_brute = 0
-+	var/liquid_heal_burn = 0
-+	var/liquid_heal_tox = 0
-+	var/liquid_heal_oxy = 0
-+	var/liquid_heal_clone = 0
-+	var/liquid_damage_brute = 0
-+	var/liquid_damage_burn = 0
-+	var/liquid_damage_tox = 0
-+	var/liquid_damage_oxy = 0
-+	var/liquid_damage_clone = 0
-+	
+ 	// Visual settings
+ 	var/belly_fullscreen = "belly1"		// Which fullscreen overlay to use
+ 	var/belly_fullscreen_color = "#ffffff"
+@@ -32,6 +40,10 @@
+ 	var/escape_stun = 0					// Stun time after escape
+ 	var/can_taste = FALSE				// Can the pred taste the prey?
+ 	
 +	// Genital linking
-+	var/linked_genital = null
-+	var/genital_size_increase = 0
-+	var/genital_size_per_prey = 0.5
-+	var/genital_size_per_absorbed = 1.0
-+	var/permanent_size_increase = FALSE
++	var/linked_genital					// Type of genital linked to this belly
++	var/linked_genital_id				// ID of the linked genital
 +	
-+	// Visuals
-+	var/belly_sprite = "belly"
-+	var/belly_size = 1
-+	var/ripple_sprite = null
-+	var/ripple_active = FALSE
-+	var/ripple_speed = 1
-+	var/overlay_icon = 'modular_splurt/icons/mob/belly.dmi'
+ 	// Sounds
+ 	var/sound_digest = 'sound/vore/digest.ogg'
+ 	var/sound_death = 'sound/vore/death.ogg'
+@@ -48,6 +60,9 @@
+ 	var/list/immutable_bellys = list()	// Bellys that cannot be deleted
+ 	var/list/escapable_bellys = list()	// Bellys that can be escaped from
+ 	
++	// Ripple animation
++	var/ripple_count = 0				// Number of active ripples
 +	
-+	// Sounds
-+	var/sound_active = TRUE
-+	var/sound_loop = 'modular_splurt/sound/vore/digest.ogg'
-+	var/volume = 50
-+
-+/obj/belly/New(mob/living/new_owner)
-+	. = ..()
-+	owner = new_owner
+ /obj/belly/Initialize(mapload)
+ 	. = ..()
+ 	// Set up default digest modes
+@@ -56,6 +71,8 @@
+ 	// Set up owner if we have one
+ 	if(istype(owner, /mob/living/carbon/human))
+ 		owner = owner
++	// Initialize liquid system
 +	START_PROCESSING(SSobj, src)
-+
-+/obj/belly/Destroy()
+ 
+ /obj/belly/Destroy()
+ 	// Clean up contents
+@@ -63,6 +80,8 @@
+ 		var/mob/living/L = prey
+ 		L.forceMove(get_turf(owner))
+ 		L.exit_belly(src)
 +	STOP_PROCESSING(SSobj, src)
-+	for(var/mob/living/L in prey)
-+		eject_prey(L)
-+	for(var/mob/living/L in absorbed_prey)
-+		eject_prey(L, TRUE)
-+	owner = null
-+	return ..()
-+
-+/obj/belly/process()
-+	if(!owner)
-+		qdel(src)
-+		return
-+	handle_digestion()
-+	handle_liquids()
-+	update_visuals()
-+
-+/obj/belly/proc/handle_digestion()
-+	if(digest_mode == DM_HOLD)
-+		return
++	clear_ripples()
+ 	return ..()
+ 
+ /obj/belly/proc/transfer_mob(mob/living/prey, obj/belly/target)
+@@ -73,6 +92,9 @@
+ 	if(!istype(prey) || prey.buckled)
+ 		return FALSE
+ 	
++	// Update linked genital size if applicable
++	update_linked_genital(TRUE)
 +	
-+	for(var/mob/living/L in prey)
-+		switch(digest_mode)
-+			if(DM_DIGEST)
-+				L.adjustBruteLoss(digest_brute)
-+				L.adjustFireLoss(digest_burn)
-+				L.adjustOxyLoss(digest_oxy)
-+				L.adjustToxLoss(digest_tox)
-+				L.adjustCloneLoss(digest_clone)
-+				if(L.stat == DEAD)
-+					absorb_prey(L)
-+			if(DM_HEAL)
-+				L.heal_bodypart_damage(digest_brute, digest_burn)
-+				L.adjustOxyLoss(-digest_oxy)
-+				L.adjustToxLoss(-digest_tox)
-+				L.adjustCloneLoss(-digest_clone)
-+			if(DM_ABSORB)
-+				absorb_prey(L)
-+			if(DM_DRAIN)
-+				L.adjustBruteLoss(digest_brute * 0.5)
-+				L.adjustFireLoss(digest_burn * 0.5)
-+				owner.heal_bodypart_damage(digest_brute * 0.3, digest_burn * 0.3)
-+			if(DM_UNABSORB)
-+				if(L in absorbed_prey)
-+					unabsorb_prey(L)
-+			if(DM_SHRINK)
-+				L.resize(L.size_multiplier - 0.01)
-+			if(DM_GROW)
-+				L.resize(L.size_multiplier + 0.01)
-+			if(DM_SIZE_STEAL)
-+				if(L.size_multiplier > 0.25)
-+					L.resize(L.size_multiplier - 0.01)
-+					owner.resize(owner.size_multiplier + 0.005)
-+
-+/obj/belly/proc/handle_liquids()
-+	if(liquid_production > 0 && liquid_fullness < liquid_max)
-+		liquid_fullness = min(liquid_max, liquid_fullness + liquid_production)
+ 	// Move prey into belly
+ 	prey.forceMove(src)
+ 	prey.belly = src
+@@ -82,6 +104,9 @@
+ 	// Update belly appearance
+ 	update_fullness()
+ 	
++	// Add ripple effect
++	add_ripple()
 +	
-+	if(liquid_fullness > 0 && length(prey) > 0)
-+		for(var/mob/living/L in prey)
-+			L
+ 	// Send messages
+ 	if(prey.client)
+ 		to_chat(prey, "<span class='warning'>You slide into [owner]'s [name]!</span>")
+@@ -97,6 +122,9 @@
+ 	if(!istype(prey) || !(prey in contents))
+ 		return FALSE
+ 	
++	// Update linked genital size if applicable
++	update_linked_genital(FALSE)
++	
+ 	// Move prey out
+ 	prey.forceMove(get_turf(owner))
+ 	prey.belly = null
+@@ -105,6 +133,9 @@
+ 	// Update belly appearance
+ 	update_fullness()
+ 	
++	// Remove a ripple
++	remove_ripple()
++	
+ 	return TRUE
+ 
+ /obj/belly/proc/digest_mob(mob/living/prey)
+@@ -116,6 +147,9 @@
+ 	// Handle digestion based on mode
+ 	switch(digest_mode)
+ 		if(DM_DIGEST)
++			// Add to liquid fullness
++			adjust_liquid(5)
++			
+ 			// Deal damage
+ 			prey.adjustBruteLoss(digest_brute)
+ 			prey.adjustFireLoss(digest_burn)
+@@ -126,6 +160,9 @@
+ 				// Prey is fully digested
+ 				full_digest(prey)
+ 		if(DM_ABSORB)
++			// Add to liquid fullness
++			adjust_liquid(3)
++			
+ 			// Absorb prey into predator
+ 			prey.adjustBruteLoss(5)
+ 			if(prey.health <= 0)
+@@ -140,6 +177,9 @@
+ 	// Remove from contents
+ 	contents -= prey
+ 	
++	// Update linked genital (permanent size increase)
++	update_linked_genital(TRUE, TRUE)
++	
+ 	// Handle items
+ 	for(var/obj/item/I in prey)
+ 		prey.dropItemToGround(I)
+@@ -157,6 +197,9 @@
+ 	// Remove from contents
+ 	contents -= prey
+ 	
++	// Update linked genital (permanent size increase)
++	update_linked_genital(TRUE, TRUE)
++	
+ 	// Handle items
+ 	for(var/obj/item/I in prey)
+ 		prey.dropItemToGround(I)
+@@ -172,6 +215,9 @@
+ 	// Remove from contents
+ 	contents -= prey
+ 	
++	// Update linked genital (permanent size increase)
++	update_linked_genital(TRUE, TRUE)
++	
+ 	// Handle items
+ 	for(var/obj/item/I in prey)
+ 		prey.dropItemToGround(I)
+@@ -181,6 +227,9 @@
+ 	// Remove from contents
+ 	contents -= prey
+ 	
++	// Update linked genital (permanent size increase)
++	update_linked_genital(TRUE, TRUE)
++	
+ 	// Handle items
+ 	for(var/obj/item/I in prey)
+ 		prey.dropItemToGround(I)
+@@ -196,6 +245,9 @@
+ 	// Remove from contents
+ 	contents -= prey
+ 	
++	// Update linked genital (permanent size increase)
++	update_linked_genital(TRUE, TRUE)
++	
+ 	// Handle items
+ 	for(var/obj/item/I in prey)
+ 		prey.dropItemToGround(I)
+@@ -205,6 +257,9 @@
+ 	// Remove from contents
+ 	contents -= prey
